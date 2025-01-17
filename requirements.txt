@@ -1,0 +1,14 @@
+python-twitter-v2
+tweepy
+transformers
+torch
+pandas
+numpy
+pytz
+ta-lib
+kiteconnect
+python-dotenv
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
