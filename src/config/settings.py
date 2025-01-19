@@ -1,17 +1,16 @@
 from typing import Dict, List
-from datetime import time
 from pydantic import BaseSettings
 
 class Settings(BaseSettings):
     # Twitter Configuration
-    TWITTER_HANDLES: List[str] = []
+    TWITTER_HANDLES: List[str] = [  ]
     TWEET_FETCH_INTERVAL: int = 60  # seconds
 
     # Market Hours (Indian Standard Time)
     MARKET_OPEN_TIME: time = time(9, 15)  # 9:15 AM IST
     MARKET_CLOSE_TIME: time = time(15, 30)  # 3:30 PM IST
     MARKET_OPENING_WINDOW: int = 30  # minutes to monitor around market opening
-    MARKET_CLOSING_WINDOW: int = 30  # minutes to monitor around market closing
+    MARKET_CLOSING_WINDOW: int = 0  # minutes to monitor around market closing
 
     # Sentiment Analysis
     SENTIMENT_THRESHOLDS: Dict[str, float] = {
