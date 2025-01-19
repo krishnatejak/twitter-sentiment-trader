@@ -6,74 +6,82 @@ import json
 import os
 from ..config.settings import settings
 from ..models.tweet import Tweet
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 class TwitterStream:
     def __init__(self, api_key: str, api_secret: str, access_token: str, access_token_secret: str):
-        auth = tweepy.OAuthHandler(api_key, api_secret)
-        auth.set_access_token(access_token, access_token_secret)
-        self.api = tweepy.API(auth)
-        self.client = tweepy.Client(
-            consumer_key=api_key,
-            consumer_secret=api_secret,
-            access_token=access_token,
-            access_token_secret=access_token_secret
-        )
+        logger.debug(f"Initializing TwitterStream with API key: {api_key[:5]}...")
+        
+        if not all([api_key, api_secret, access_token, access_token_secret]):
+            logger.error("Missing Twitter credentials:")
+            logger.error(f"API Key present: {bool(api_key)}")
+            logger.error(f"API Secret present: {bool(api_secret)}")
+            logger.error(f"Access Token present: {bool(access_token)}")
+            logger.error(f"Access Token Secret present: {bool(access_token_secret)}")
+            raise ValueError("All Twitter credentials are required")
+
+        try:
+            auth = tweepy.OAuthHandler(api_key, api_secret)
+            auth.set_access_token(access_token, access_token_secret)
+            self.api = tweepy.API(auth)
+            self.client = tweepy.Client(
+                consumer_key=api_key,
+                consumer_secret=api_secret,
+                access_token=access_token,
+                access_token_secret=access_token_secret
+            )
+            logger.info("Successfully initialized Twitter API client")
+        except Exception as e:
+            logger.error(f"Error initializing Twitter API: {str(e)}")
+            raise
+
         self.ist_tz = pytz.timezone('Asia/Kolkata')
         self.cache_dir = 'tweet_cache'
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def is_market_hours(self, dt: datetime) -> bool:
-        """Check if given time is within market opening or closing window"""
-        ist_time = dt.astimezone(self.ist_tz).time()
-        
-        # Check market opening window
-        market_open = datetime.combine(dt.date(), settings.MARKET_OPEN_TIME)
-        open_start = market_open - timedelta(minutes=settings.MARKET_OPENING_WINDOW)
-        open_end = market_open + timedelta(minutes=settings.MARKET_OPENING_WINDOW)
-        
-        # Check market closing window
-        market_close = datetime.combine(dt.date(), settings.MARKET_CLOSE_TIME)
-        close_start = market_close - timedelta(minutes=settings.MARKET_CLOSING_WINDOW)
-        close_end = market_close + timedelta(minutes=settings.MARKET_CLOSING_WINDOW)
-        
-        return (open_start.time() <= ist_time <= open_end.time() or 
-                close_start.time() <= ist_time <= close_end.time())
-
-    def get_cache_path(self, handle: str, date: datetime) -> str:
-        """Get cache file path for a specific handle and date"""
-        date_str = date.strftime('%Y-%m-%d')
-        return os.path.join(self.cache_dir, f'{handle}_{date_str}.json')
-
-    def save_to_cache(self, handle: str, date: datetime, tweets: List[dict]):
-        """Save tweets to cache"""
-        if settings.CACHE_TWEETS:
-            cache_path = self.get_cache_path(handle, date)
-            with open(cache_path, 'w') as f:
-                json.dump(tweets, f)
-
-    def load_from_cache(self, handle: str, date: datetime) -> Optional[List[dict]]:
-        """Load tweets from cache if available"""
-        if settings.CACHE_TWEETS:
-            cache_path = self.get_cache_path(handle, date)
-            if os.path.exists(cache_path):
-                with open(cache_path, 'r') as f:
-                    return json.load(f)
-        return None
+    def get_users_tweets(self, user_id: str, limit: Optional[int] = None) -> List[dict]:
+        logger.debug(f"Fetching tweets for user_id: {user_id}, limit: {limit}")
+        try:
+            tweets = self.client.get_users_tweets(
+                user_id,
+                max_results=limit,
+                exclude=['retweets', 'replies'],
+                tweet_fields=['created_at', 'public_metrics']
+            )
+            
+            if not tweets.data:
+                logger.info(f"No tweets found for user_id: {user_id}")
+                return []
+            
+            logger.info(f"Successfully fetched {len(tweets.data)} tweets")
+            return tweets.data
+            
+        except Exception as e:
+            logger.error(f"Error fetching tweets: {str(e)}")
+            return []
 
     def start_stream(self, handles: List[str], callback: Callable[[Tweet], None], is_backtest: bool = False):
-        """Start streaming tweets from specified handles"""
+        logger.info(f"Starting stream for handles: {handles}, is_backtest: {is_backtest}")
         current_time = datetime.now(self.ist_tz)
         
-        # Skip if not market hours (only for live trading)
         if not is_backtest and not self.is_market_hours(current_time):
+            logger.info("Skipping - Not market hours")
             return
 
         for handle in handles:
+            logger.debug(f"Processing handle: {handle}")
             try:
-                # Try loading from cache first
+                # Try cache first
                 cached_tweets = self.load_from_cache(handle, current_time)
-                
                 if cached_tweets is not None:
+                    logger.info(f"Using cached tweets for {handle}")
                     for tweet_data in cached_tweets:
                         tweet_obj = Tweet(
                             id=tweet_data['id'],
@@ -84,38 +92,86 @@ class TwitterStream:
                         callback(tweet_obj)
                     continue
 
-                # If not in cache, fetch from API
+                # Get user details
+                logger.debug(f"Fetching user details for {handle}")
                 user = self.client.get_user(username=handle)
-                if user.data:
-                    # For backtesting, limit the number of tweets
-                    tweet_limit = settings.TWEETS_PER_DAY_LIMIT if is_backtest else None
-                    
-                    tweets = self.client.get_users_tweets(
-                        user.data.id,
-                        max_results=tweet_limit
-                    )
-                    
-                    if tweets.data:
-                        # Filter tweets by market hours
-                        market_tweets = []
-                        for tweet in tweets.data:
-                            tweet_time = tweet.created_at.astimezone(self.ist_tz)
-                            if is_backtest or self.is_market_hours(tweet_time):
-                                tweet_obj = Tweet(
-                                    id=tweet.id,
-                                    text=tweet.text,
-                                    author=handle,
-                                    created_at=tweet_time
-                                )
-                                callback(tweet_obj)
-                                market_tweets.append({
-                                    'id': str(tweet.id),
-                                    'text': tweet.text,
-                                    'created_at': tweet_time.isoformat()
-                                })
-                        
-                        # Cache the tweets
-                        self.save_to_cache(handle, current_time, market_tweets)
+                if not user.data:
+                    logger.warning(f"User not found: {handle}")
+                    continue
+                
+                logger.info(f"Found user {handle} with id: {user.data.id}")
+                
+                # Get tweets
+                tweet_limit = settings.TWEETS_PER_DAY_LIMIT if is_backtest else None
+                tweets = self.get_users_tweets(user.data.id, limit=tweet_limit)
+                
+                # Process tweets
+                market_tweets = []
+                for tweet in tweets:
+                    tweet_time = tweet.created_at.astimezone(self.ist_tz)
+                    if is_backtest or self.is_market_hours(tweet_time):
+                        tweet_obj = Tweet(
+                            id=tweet.id,
+                            text=tweet.text,
+                            author=handle,
+                            created_at=tweet_time
+                        )
+                        callback(tweet_obj)
+                        market_tweets.append({
+                            'id': str(tweet.id),
+                            'text': tweet.text,
+                            'created_at': tweet_time.isoformat()
+                        })
+                
+                # Cache tweets
+                if market_tweets:
+                    logger.info(f"Caching {len(market_tweets)} tweets for {handle}")
+                    self.save_to_cache(handle, current_time, market_tweets)
 
             except Exception as e:
-                print(f'Error processing handle {handle}: {str(e)}')
+                logger.error(f"Error processing handle {handle}: {str(e)}", exc_info=True)
+
+    def is_market_hours(self, dt: datetime) -> bool:
+        ist_time = dt.astimezone(self.ist_tz).time()
+        
+        # Market windows
+        market_open = datetime.combine(dt.date(), settings.MARKET_OPEN_TIME)
+        open_start = market_open - timedelta(minutes=settings.MARKET_OPENING_WINDOW)
+        open_end = market_open + timedelta(minutes=settings.MARKET_OPENING_WINDOW)
+        
+        market_close = datetime.combine(dt.date(), settings.MARKET_CLOSE_TIME)
+        close_start = market_close - timedelta(minutes=settings.MARKET_CLOSING_WINDOW)
+        close_end = market_close + timedelta(minutes=settings.MARKET_CLOSING_WINDOW)
+        
+        is_opening = open_start.time() <= ist_time <= open_end.time()
+        is_closing = close_start.time() <= ist_time <= close_end.time()
+        
+        logger.debug(f"Time: {ist_time}, Is opening: {is_opening}, Is closing: {is_closing}")
+        return is_opening or is_closing
+
+    def get_cache_path(self, handle: str, date: datetime) -> str:
+        date_str = date.strftime('%Y-%m-%d')
+        return os.path.join(self.cache_dir, f'{handle}_{date_str}.json')
+
+    def save_to_cache(self, handle: str, date: datetime, tweets: List[dict]):
+        if settings.CACHE_TWEETS:
+            cache_path = self.get_cache_path(handle, date)
+            try:
+                with open(cache_path, 'w') as f:
+                    json.dump(tweets, f)
+                logger.debug(f"Saved tweets to cache: {cache_path}")
+            except Exception as e:
+                logger.error(f"Error saving to cache: {str(e)}")
+
+    def load_from_cache(self, handle: str, date: datetime) -> Optional[List[dict]]:
+        if settings.CACHE_TWEETS:
+            cache_path = self.get_cache_path(handle, date)
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, 'r') as f:
+                        tweets = json.load(f)
+                        logger.debug(f"Loaded {len(tweets)} tweets from cache: {cache_path}")
+                        return tweets
+                except Exception as e:
+                    logger.error(f"Error loading from cache: {str(e)}")
+        return None

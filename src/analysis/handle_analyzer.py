@@ -3,11 +3,38 @@ from datetime import datetime, timedelta
 import pandas as pd
 import argparse
 from typing import List, Dict
+import logging
 from ..backtesting.backtest import Backtester
 from ..config.settings import settings
 
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 class HandleAnalyzer:
     def __init__(self, handles: List[str], start_date: str, end_date: str):
+        logger.info(f"Initializing HandleAnalyzer with dates: {start_date} to {end_date}")
+        logger.info(f"Handles to analyze: {handles}")
+        
+        # Validate settings
+        logger.debug("Validating Twitter credentials...")
+        if not all([
+            settings.TWITTER_API_KEY,
+            settings.TWITTER_API_SECRET,
+            settings.TWITTER_ACCESS_TOKEN,
+            settings.TWITTER_ACCESS_TOKEN_SECRET
+        ]):
+            logger.error("Missing Twitter credentials in settings")
+            raise ValueError("Twitter credentials not properly configured")
+
+        logger.debug("Validating Zerodha credentials...")
+        if not all([settings.KITE_API_KEY, settings.KITE_API_SECRET]):
+            logger.error("Missing Zerodha credentials in settings")
+            raise ValueError("Zerodha credentials not properly configured")
+
         self.handles = handles
         self.start_date = start_date
         self.end_date = end_date
@@ -15,27 +42,41 @@ class HandleAnalyzer:
         
     def analyze_handles(self):
         """Run backtests for all handles"""
+        logger.info("Starting handle analysis")
+        
         for handle in self.handles:
-            print(f"\nAnalyzing handle: {handle}")
+            logger.info(f"\nAnalyzing handle: {handle}")
             try:
+                logger.debug(f"Creating backtester for {handle}")
                 backtester = Backtester(self.start_date, self.end_date)
+                
+                logger.info(f"Running backtest for {handle}")
                 backtester.run_backtest(handle)
                 
+                logger.debug(f"Storing results for {handle}")
                 self.results[handle] = {
                     'performance_metrics': backtester.performance_metrics,
                     'symbol_metrics': backtester.symbol_metrics,
                     'symbols_traded': list(backtester.symbols_traded)
                 }
+                
+                logger.info(f"Successfully analyzed {handle}")
+                logger.debug(f"Results for {handle}: {self.results[handle]}")
+                
             except Exception as e:
-                print(f"Error analyzing handle {handle}: {str(e)}")
+                logger.error(f"Error analyzing handle {handle}: {str(e)}", exc_info=True)
     
     def generate_rankings(self) -> pd.DataFrame:
         """Generate rankings based on different metrics"""
+        logger.info("Generating handle rankings")
+        
         if not self.results:
+            logger.warning("No results available for ranking")
             return pd.DataFrame()
             
         rankings_data = []
         for handle, data in self.results.items():
+            logger.debug(f"Processing rankings for {handle}")
             metrics = data['performance_metrics']
             rankings_data.append({
                 'handle': handle,
@@ -60,38 +101,6 @@ class HandleAnalyzer:
         ) / 4
         
         return df.sort_values('score', ascending=False)
-    
-    def generate_report(self) -> str:
-        """Generate a comprehensive analysis report"""
-        if not self.results:
-            return "No analysis results available."
-            
-        rankings = self.generate_rankings()
-        
-        report = []
-        report.append("=== Twitter Handle Analysis Report ===\n")
-        
-        report.append("Top Performing Handles:")
-        for _, row in rankings.head().iterrows():
-            report.append(f"\n{row['handle']}:")
-            report.append(f"  Total P&L: ₹{row['total_pnl']:,.2f}")
-            report.append(f"  Win Rate: {row['win_rate']:.2%}")
-            report.append(f"  Sharpe Ratio: {row['sharpe_ratio']:.2f}")
-            report.append(f"  Profit Factor: {row['profit_factor']:.2f}")
-            report.append(f"  Symbols Traded: {row['symbols_traded']}")
-            
-        report.append("\nSymbol Analysis:")
-        for handle, data in self.results.items():
-            report.append(f"\n{handle} - Top Symbols:")
-            symbol_metrics = pd.DataFrame.from_dict(data['symbol_metrics'], orient='index')
-            if not symbol_metrics.empty:
-                top_symbols = symbol_metrics.nlargest(3, 'total_pnl')
-                for idx, sym_data in top_symbols.iterrows():
-                    report.append(f"  {idx}:")
-                    report.append(f"    P&L: ₹{sym_data['total_pnl']:,.2f}")
-                    report.append(f"    Win Rate: {sym_data['win_rate']:.2%}")
-        
-        return "\n".join(report)
 
 def main():
     parser = argparse.ArgumentParser(description='Analyze multiple Twitter handles for trading performance')
@@ -100,8 +109,17 @@ def main():
     parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)')
     parser.add_argument('--days', type=int, default=30, help='Number of days to analyze (default: 30)')
     parser.add_argument('--output', type=str, help='Output CSV file for results')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     
     args = parser.parse_args()
+    
+    # Configure logging level
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    logger.info("Starting analysis with arguments:")
+    logger.info(f"Handles: {args.handles}")
+    logger.info(f"Debug mode: {args.debug}")
     
     # Set dates
     if args.start_date and args.end_date:
@@ -111,17 +129,26 @@ def main():
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=args.days)).strftime('%Y-%m-%d')
     
-    # Run analysis
-    analyzer = HandleAnalyzer(args.handles, start_date, end_date)
-    analyzer.analyze_handles()
+    logger.info(f"Analysis period: {start_date} to {end_date}")
     
-    # Print report
-    print(analyzer.generate_report())
-    
-    # Save results if output file specified
-    if args.output:
+    try:
+        # Run analysis
+        analyzer = HandleAnalyzer(args.handles, start_date, end_date)
+        analyzer.analyze_handles()
+        
+        # Generate and print report
         rankings = analyzer.generate_rankings()
-        rankings.to_csv(args.output, index=False)
+        print("\nAnalysis Results:")
+        print(rankings)
+        
+        # Save results if output file specified
+        if args.output:
+            logger.info(f"Saving results to {args.output}")
+            rankings.to_csv(args.output, index=False)
+            
+    except Exception as e:
+        logger.error(f"Error during analysis: {str(e)}", exc_info=True)
+        raise
 
 if __name__ == "__main__":
     main()
