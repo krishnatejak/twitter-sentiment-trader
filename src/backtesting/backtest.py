@@ -13,6 +13,15 @@ from ..config.settings import settings
 
 class Backtester:
     def __init__(self, start_date: str, end_date: str):
+        logger.info("Initializing Backtester")
+        
+        # Load environment variables
+        load_dotenv()
+        
+        # Log environment variable status
+        logger.debug("Checking environment variables:")
+        logger.debug(f"TWITTER_BEARER_TOKEN present: {bool(os.getenv('TWITTER_BEARER_TOKEN'))}")
+        
         # Initialize components
         self.historical_data = HistoricalDataFetcher(
             api_key=os.getenv('KITE_API_KEY'),
@@ -25,7 +34,8 @@ class Backtester:
             api_key=os.getenv('TWITTER_API_KEY'),
             api_secret=os.getenv('TWITTER_API_SECRET'),
             access_token=os.getenv('TWITTER_ACCESS_TOKEN'),
-            access_token_secret=os.getenv('TWITTER_ACCESS_TOKEN_SECRET')
+            access_token_secret=os.getenv('TWITTER_ACCESS_TOKEN_SECRET'),
+            bearer_token=os.getenv('TWITTER_BEARER_TOKEN')
         )
         
         self.start_date = datetime.strptime(start_date, '%Y-%m-%d')

@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     TWITTER_API_SECRET: str = Field(default="")
     TWITTER_ACCESS_TOKEN: str = Field(default="")
     TWITTER_ACCESS_TOKEN_SECRET: str = Field(default="")
+    TWITTER_BEARER_TOKEN: str = Field(default="")  # Added Bearer Token
 
     # Zerodha Credentials
     KITE_API_KEY: str = Field(default="")
@@ -19,13 +20,13 @@ class Settings(BaseSettings):
 
     # Twitter Configuration
     TWITTER_HANDLES: List[str] = Field(default=[])
-    TWEET_FETCH_INTERVAL: int = Field(default=60)  # seconds
+    TWEET_FETCH_INTERVAL: int = Field(default=60)
 
     # Market Hours (Indian Standard Time)
-    MARKET_OPEN_TIME: time = Field(default=time(9, 15))  # 9:15 AM IST
-    MARKET_CLOSE_TIME: time = Field(default=time(15, 30))  # 3:30 PM IST
-    MARKET_OPENING_WINDOW: int = Field(default=30)  # minutes to monitor around market opening
-    MARKET_CLOSING_WINDOW: int = Field(default=30)  # minutes to monitor around market closing
+    MARKET_OPEN_TIME: time = Field(default=time(9, 15))
+    MARKET_CLOSE_TIME: time = Field(default=time(15, 30))
+    MARKET_OPENING_WINDOW: int = Field(default=30)
+    MARKET_CLOSING_WINDOW: int = Field(default=30)
 
     # Sentiment Analysis
     SENTIMENT_THRESHOLDS: Dict[str, float] = Field(default={
@@ -36,20 +37,20 @@ class Settings(BaseSettings):
     })
 
     # Trading Configuration
-    TRADE_AMOUNT: float = Field(default=10000.0)  # Amount per trade in INR
-    MAX_POSITIONS: int = Field(default=5)  # Maximum number of concurrent positions
+    TRADE_AMOUNT: float = Field(default=10000.0)
+    MAX_POSITIONS: int = Field(default=5)
     STOP_LOSS_PERCENTAGE: float = Field(default=2.0)
     TARGET_PERCENTAGE: float = Field(default=4.0)
 
     # Backtesting Configuration
     BACKTEST_START_DATE: str = Field(default='2024-01-01')
     BACKTEST_END_DATE: str = Field(default='2024-12-31')
-    TWEETS_PER_DAY_LIMIT: int = Field(default=100)  # Limit API calls during backtesting
-    CACHE_TWEETS: bool = Field(default=True)  # Cache tweets for reuse in backtesting
+    TWEETS_PER_DAY_LIMIT: int = Field(default=100)
+    CACHE_TWEETS: bool = Field(default=True)
 
     class Config:
         env_file = '.env'
         case_sensitive = False
-        extra = 'ignore'  # This will ignore extra fields in the environment
+        env_prefix = ""
 
 settings = Settings()

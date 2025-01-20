@@ -4,14 +4,11 @@ import pandas as pd
 import argparse
 from typing import List, Dict
 import logging
+from dotenv import load_dotenv
 from ..backtesting.backtest import Backtester
 from ..config.settings import settings
+from ..config.validator import ConfigValidator
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 class HandleAnalyzer:
@@ -19,21 +16,16 @@ class HandleAnalyzer:
         logger.info(f"Initializing HandleAnalyzer with dates: {start_date} to {end_date}")
         logger.info(f"Handles to analyze: {handles}")
         
-        # Validate settings
-        logger.debug("Validating Twitter credentials...")
-        if not all([
-            settings.TWITTER_API_KEY,
-            settings.TWITTER_API_SECRET,
-            settings.TWITTER_ACCESS_TOKEN,
-            settings.TWITTER_ACCESS_TOKEN_SECRET
-        ]):
-            logger.error("Missing Twitter credentials in settings")
-            raise ValueError("Twitter credentials not properly configured")
-
-        logger.debug("Validating Zerodha credentials...")
-        if not all([settings.KITE_API_KEY, settings.KITE_API_SECRET]):
-            logger.error("Missing Zerodha credentials in settings")
-            raise ValueError("Zerodha credentials not properly configured")
+        # Load environment variables
+        load_dotenv()
+        
+        # Validate configuration
+        logger.info("Validating configuration and testing connections")
+        try:
+            ConfigValidator.validate_all()
+        except Exception as e:
+            logger.error(f"Configuration validation failed: {str(e)}")
+            raise
 
         self.handles = handles
         self.start_date = start_date

@@ -8,34 +8,25 @@ from ..config.settings import settings
 from ..models.tweet import Tweet
 import logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 class TwitterStream:
-    def __init__(self, api_key: str, api_secret: str, access_token: str, access_token_secret: str):
-        logger.debug(f"Initializing TwitterStream with API key: {api_key[:5]}...")
+    def __init__(self, api_key: str, api_secret: str, access_token: str, access_token_secret: str, bearer_token: str = None):
+        logger.debug("Initializing TwitterStream")
         
-        if not all([api_key, api_secret, access_token, access_token_secret]):
-            logger.error("Missing Twitter credentials:")
-            logger.error(f"API Key present: {bool(api_key)}")
-            logger.error(f"API Secret present: {bool(api_secret)}")
-            logger.error(f"Access Token present: {bool(access_token)}")
-            logger.error(f"Access Token Secret present: {bool(access_token_secret)}")
-            raise ValueError("All Twitter credentials are required")
+        if not bearer_token:
+            logger.error("Bearer token is required for Twitter API v2")
+            raise ValueError("Bearer token is required")
 
         try:
-            auth = tweepy.OAuthHandler(api_key, api_secret)
-            auth.set_access_token(access_token, access_token_secret)
-            self.api = tweepy.API(auth)
+            logger.debug("Initializing Twitter Client with Bearer Token")
             self.client = tweepy.Client(
+                bearer_token=bearer_token,
                 consumer_key=api_key,
                 consumer_secret=api_secret,
                 access_token=access_token,
-                access_token_secret=access_token_secret
+                access_token_secret=access_token_secret,
+                wait_on_rate_limit=True
             )
             logger.info("Successfully initialized Twitter API client")
         except Exception as e:
@@ -50,8 +41,8 @@ class TwitterStream:
         logger.debug(f"Fetching tweets for user_id: {user_id}, limit: {limit}")
         try:
             tweets = self.client.get_users_tweets(
-                user_id,
-                max_results=limit,
+                id=user_id,
+                max_results=limit or 100,
                 exclude=['retweets', 'replies'],
                 tweet_fields=['created_at', 'public_metrics']
             )
@@ -67,7 +58,21 @@ class TwitterStream:
             logger.error(f"Error fetching tweets: {str(e)}")
             return []
 
+    def test_connection(self) -> bool:
+        """Test the Twitter API connection"""
+        try:
+            logger.debug("Testing Twitter API connection")
+            test_user = self.client.get_user(username="Twitter")
+            if test_user.data:
+                logger.info("Twitter API connection test successful")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Twitter API connection test failed: {str(e)}")
+            return False
+
     def start_stream(self, handles: List[str], callback: Callable[[Tweet], None], is_backtest: bool = False):
+        """Start streaming tweets from specified handles"""
         logger.info(f"Starting stream for handles: {handles}, is_backtest: {is_backtest}")
         current_time = datetime.now(self.ist_tz)
         
@@ -78,8 +83,9 @@ class TwitterStream:
         for handle in handles:
             logger.debug(f"Processing handle: {handle}")
             try:
-                # Try cache first
+                # Try loading from cache first
                 cached_tweets = self.load_from_cache(handle, current_time)
+                
                 if cached_tweets is not None:
                     logger.info(f"Using cached tweets for {handle}")
                     for tweet_data in cached_tweets:
@@ -94,7 +100,7 @@ class TwitterStream:
 
                 # Get user details
                 logger.debug(f"Fetching user details for {handle}")
-                user = self.client.get_user(username=handle)
+                user = self.client.get_user(username=handle.lstrip('@'))
                 if not user.data:
                     logger.warning(f"User not found: {handle}")
                     continue
@@ -134,7 +140,6 @@ class TwitterStream:
     def is_market_hours(self, dt: datetime) -> bool:
         ist_time = dt.astimezone(self.ist_tz).time()
         
-        # Market windows
         market_open = datetime.combine(dt.date(), settings.MARKET_OPEN_TIME)
         open_start = market_open - timedelta(minutes=settings.MARKET_OPENING_WINDOW)
         open_end = market_open + timedelta(minutes=settings.MARKET_OPENING_WINDOW)
